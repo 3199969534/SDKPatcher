@@ -1,0 +1,46 @@
+name: Build unsigned IPA (iOS 27.1 SDK)
+on:
+  workflow_dispatch:
+  push:
+jobs:
+  build:
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest Xcode and check iOS 27.1 SDK
+        run: |
+          ls -d /Applications/Xcode*.app
+          LATEST=$(ls -d /Applications/Xcode*.app | sort -V | tail -n 1)
+          echo "Using $LATEST"
+          sudo xcode-select -s "$LATEST/Contents/Developer"
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i iphoneos
+          if ! xcodebuild -showsdks | grep -q "iphoneos27\.[1-9]"; then
+            echo "::error::No iOS 27.1+ SDK on this runner image"
+            exit 1
+          fi
+
+      - run: brew install xcodegen
+      - run: xcodegen generate
+
+      - name: Build (unsigned)
+        run: |
+          xcodebuild -project SDKPatcher.xcodeproj -scheme SDKPatcher \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" build
+
+      - name: Show SDK version of the build
+        run: vtool -show-build build/Build/Products/Release-iphoneos/SDKPatcher.app/SDKPatcher
+
+      - name: Package IPA
+        run: |
+          mkdir -p out/Payload
+          cp -R build/Build/Products/Release-iphoneos/SDKPatcher.app out/Payload/
+          cd out && zip -qr SDKPatcher.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SDKPatcher-unsigned-ipa
+          path: out/SDKPatcher.ipa
